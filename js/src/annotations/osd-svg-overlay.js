@@ -19,7 +19,7 @@
     var availableExternalCommentsPanel = state.getStateProperty('availableExternalCommentsPanel');
     jQuery.extend(this, {
       disabled: true,
-      inEditMode: false,
+      inEditOrCreateMode: false,
       osdViewerId: osdViewerId,
       windowId: windowId,
       commentPanel: null,
@@ -66,99 +66,7 @@
     this.slotWindowElement = state.getWindowElement(this.windowId);
     this.state = state;
     this.eventEmitter = eventEmitter;
-    var _thisResize = function() {
-      _this.resize();
-    };
-    this.viewer.addHandler('animation', _thisResize);
-    this.viewer.addHandler('open', _thisResize);
-    this.viewer.addHandler('animation-finish', _thisResize);
-    this.viewer.addHandler('update-viewport', _thisResize);
-    this.viewer.addHandler('resize', _thisResize);
-    this.viewer.addHandler('rotate', _thisResize);
-    this.viewer.addHandler('constrain', _thisResize);
-
-    var _thisDestroy = function(){
-      _this.destroy();
-    };
-
-    this.viewer.addHandler('close',_thisDestroy);
-
-    _this.eventEmitter.subscribe('modeChange.' + _this.windowId,function(event,newMode){
-      _this.currentTool = '';
-    });
-
-    _this.eventEmitter.subscribe('toggleDrawingTool.' + _this.windowId, function(event, tool) {
-      //qtip code should NOT be here
-      if (_this.disabled) {
-        jQuery('.qtip' + _this.windowId).qtip('hide');
-        return;
-      }
-      jQuery('#' + osdViewerId).parents('.window').find('.qtip-viewer').hide();
-      _this.currentTool = null;
-      for (var i = 0; i < _this.tools.length; i++) {
-        if (_this.tools[i].logoClass === tool) {
-          _this.currentTool = _this.tools[i];
-        }
-      }
-    });
-
-    _this.eventEmitter.subscribe('toggleDefaultDrawingTool.' + _this.windowId, function(event) {
-      //qtip code should NOT be here
-      if (_this.disabled) {
-        jQuery('.qtip' + _this.windowId).qtip('hide');
-        return;
-      }
-      jQuery('#' + osdViewerId).parents('.window').find('.qtip-viewer').hide();
-      _this.currentTool = null;
-      for (var i = 0; i < _this.availableAnnotationDrawingTools.length; i++) {
-        for (var j = 0; j < _this.tools.length; j++) {
-          if (_this.availableAnnotationDrawingTools[i] == _this.tools[j].name) {
-            _this.currentTool = _this.tools[j];
-            break;
-          }
-        }
-        if (_this.currentTool) {
-          break;
-        }
-      }
-    });
-
-    var _thisHandleDeleteShapeEvent = function(event,shape){
-      _this.handleDeleteShapeEvent(event,shape);
-    };
-    _this.eventEmitter.subscribe('deleteShape.' + _this.windowId, _thisHandleDeleteShapeEvent);
-
-    _this.eventEmitter.subscribe('changeBorderColor.' + _this.windowId, function(event, color) {
-      _this.strokeColor = color;
-      if (_this.hoveredPath) {
-        _this.hoveredPath.strokeColor = color;
-        _this.paperScope.view.draw();
-      }
-    });
-
-    _this.eventEmitter.subscribe('changeFillColor.' + _this.windowId, function(event, color, alpha) {
-      _this.fillColor = color;
-      _this.fillColorAlpha = alpha;
-      if (_this.hoveredPath && _this.hoveredPath.closed) {
-        _this.hoveredPath.fillColor = color;
-        _this.hoveredPath.fillColor.alpha = alpha;
-        _this.paperScope.view.draw();
-      }
-    });
-
-    _this.eventEmitter.subscribe('toggleBorderType.' + _this.windowId, function (event, type) {
-      if (type == 'solid') {
-        _this.dashArray = [];
-      } else if (type == 'dashed') {
-        _this.dashArray = [5, 5];
-      } else if (type == 'dotdashed') {
-        _this.dashArray = [2, 5, 7, 5];
-      }
-      if (_this.hoveredPath) {
-        _this.hoveredPath.dashArray = _this.dashArray;
-        _this.paperScope.view.draw();
-      }
-    });
+    this.eventsSubscriptions = [];
 
     this.resize();
     this.show();
@@ -169,6 +77,7 @@
     init: function() {
       // Initialization of Paper.js overlay.
       var _this = this;
+      this.lastAngle = 0;
       this.paperScope = new paper.PaperScope();
       this.paperScope.setup('draw_canvas_' + _this.windowId);
       this.paperScope.activate();
@@ -212,9 +121,24 @@
 
     handleDeleteShapeEvent: function (event, shape) {
       var _this = this;
-      new $.DialogBuilder(this.slotWindowElement).confirm(i18n.t('deleteShape'), function (result) {
-        if (result) {
-          _this.deleteShape(shape);
+      new $.DialogBuilder(this.slotWindowElement).dialog({
+        message: i18n.t('deleteShape'),
+        closeButton: false,
+        buttons: {
+          'no': {
+            label: i18n.t('no'),
+            className: 'btn-default',
+            callback: function() {
+              return;
+            }
+          },
+          'yes': {
+            label: i18n.t('yes'),
+            className: 'btn-primary',
+            callback: function() {
+              _this.deleteShape(shape);
+            }
+          }
         }
       });
     },
@@ -222,18 +146,273 @@
     listenForActions: function() {
       var _this = this;
 
-      this.eventEmitter.subscribe('SET_OVERLAY_TOOLTIP.' + this.windowId, function(event, options) {
+      this._thisResize = function(){
+        _this.resize();
+      };
+      this._thisRotate = function(event) {
+        _this.rotate(event);
+        _this.resize();
+      };
+      this.viewer.addHandler('animation', this._thisResize);
+      this.viewer.addHandler('open', this._thisResize);
+      this.viewer.addHandler('animation-finish', this._thisResize);
+      this.viewer.addHandler('update-viewport', this._thisResize);
+      this.viewer.addHandler('resize',this._thisResize);
+      this.viewer.addHandler('rotate', this._thisRotate);
+      this.viewer.addHandler('constrain',this._thisResize);
+
+      this._thisDestroy = function(){
+        _this.destroy();
+      };
+
+      this.viewer.addHandler('close',this._thisDestroy);
+
+      this.eventsSubscriptions.push(this.eventEmitter.subscribe('DESTROY_EVENTS.'+this.windowId, function(event) {
+        _this.destroy();
+      }));
+
+      this.eventsSubscriptions.push(_this.eventEmitter.subscribe('toggleDrawingTool.' + _this.windowId, function(event, tool) {
+        //qtip code should NOT be here
+        if (_this.disabled) {
+        //   jQuery('.qtip' + _this.windowId).qtip('hide');
+          return;
+        }
+        // jQuery('#' + _this.osdViewerId).parents('.window').find('.qtip-viewer').hide();
+        _this.currentTool = null;
+        _this.mode = '';
+        for (var i = 0; i < _this.tools.length; i++) {
+          if (_this.tools[i].logoClass === tool) {
+            _this.currentTool = _this.tools[i];
+          }
+        }
+      }));
+
+      var _thisHandleDeleteShapeEvent = function(event,shape){
+        _this.handleDeleteShapeEvent(event,shape);
+      };
+      this.eventsSubscriptions.push(_this.eventEmitter.subscribe('deleteShape.' + _this.windowId, _thisHandleDeleteShapeEvent));
+
+      this.eventsSubscriptions.push(_this.eventEmitter.subscribe('changeBorderColor.' + _this.windowId, function(event, color) {
+        _this.strokeColor = color;
+        if (_this.hoveredPath) {
+          _this.hoveredPath.strokeColor = color;
+          _this.paperScope.view.draw();
+        }
+      }));
+
+      this.eventsSubscriptions.push(_this.eventEmitter.subscribe('changeFillColor.' + _this.windowId, function(event, color, alpha) {
+        _this.fillColor = color;
+        _this.fillColorAlpha = alpha;
+        if (_this.hoveredPath && _this.hoveredPath.closed) {
+          _this.hoveredPath.fillColor = color;
+          _this.hoveredPath.fillColor.alpha = alpha;
+          _this.paperScope.view.draw();
+        }
+      }));
+
+      this.eventsSubscriptions.push(_this.eventEmitter.subscribe('toggleBorderType.' + _this.windowId, function (event, type) {
+        if (type == 'solid') {
+          _this.dashArray = [];
+        } else if (type == 'dashed') {
+          _this.dashArray = [5, 5];
+        } else if (type == 'dotdashed') {
+          _this.dashArray = [2, 5, 7, 5];
+        }
+        if (_this.hoveredPath) {
+          _this.hoveredPath.dashArray = _this.dashArray;
+          _this.paperScope.view.draw();
+        }
+      }));
+
+      this.eventsSubscriptions.push(_this.eventEmitter.subscribe('annotationEditSave.'+_this.windowId,function(event,oaAnno){
+        var onAnnotationSaved = jQuery.Deferred();
+        if (!_this.draftPaths.length) {
+            new $.DialogBuilder(_this.slotWindowElement).dialog({
+              message: i18n.t('editModalSaveAnnotationWithNoShapesMsg'),
+              closeButton: false,
+              buttons: {
+                success: {
+                  label: i18n.t('editModalBtnSaveWithoutShapes'),
+                  className: 'btn-success',
+                  callback: function () {
+                    oaAnno.on = {
+                      "@type": "oa:SpecificResource",
+                      "full": _this.state.getWindowObjectById(_this.windowId).canvasID
+                    };
+                    //save to endpoint
+                    _this.eventEmitter.publish('annotationUpdated.' + _this.windowId, [oaAnno]);
+                    onAnnotationSaved.resolve();
+                  }
+                },
+                danger: {
+                  label: i18n.t('editModalBtnDeleteAnnotation'),
+                  className: 'btn-danger',
+                  callback: function () {
+                    _this.eventEmitter.publish('annotationDeleted.' + _this.windowId, [oaAnno['@id']]);
+                    onAnnotationSaved.resolve();
+                  }
+                },
+                main: {
+                  label: i18n.t('cancel'),
+                  className: 'btn-default',
+                  callback: function () {
+                    onAnnotationSaved.reject();
+                  }
+                }
+              }
+            });
+        } else {
+          var svg = _this.getSVGString(_this.draftPaths);
+          oaAnno.on = {
+            "@type": "oa:SpecificResource",
+            "full": _this.state.getWindowObjectById(_this.windowId).canvasID,
+            "selector": {
+              "@type": "oa:SvgSelector",
+              "value": svg
+            },
+            "within": {
+              "@id": _this.state.getWindowObjectById(_this.windowId).loadedManifest,
+              "@type": "sc:Manifest"
+            }
+          };
+          //save to endpoint
+          _this.eventEmitter.publish('annotationUpdated.' + _this.windowId, [oaAnno]);
+          onAnnotationSaved.resolve();
+        }
+
+        jQuery.when(onAnnotationSaved.promise()).then(function(){
+          _this.eventEmitter.publish('annotationEditSaveSuccessful.'+_this.windowId);
+          _this.eventEmitter.publish('SET_ANNOTATION_EDITING.' + _this.windowId, {
+            "annotationId" : oaAnno['@id'],
+            "isEditable" : false,
+            "tooltip" : _this
+          });
+          // return to pointer mode
+          _this.inEditOrCreateMode = false;
+          _this.eventEmitter.publish('SET_STATE_MACHINE_POINTER.' + _this.windowId);
+
+        },function(){
+          // confirmation rejected don't do anything
+        });
+
+
+      }));
+
+      this.eventsSubscriptions.push(_this.eventEmitter.subscribe('annotationEditCancel.'+_this.windowId,function(event,id){
+
+        _this.eventEmitter.publish('SET_ANNOTATION_EDITING.' + _this.windowId, {
+          "annotationId" : id,
+          "isEditable" : false,
+          "tooltip" : _this.annoTooltip // whats the point of this? maybe when we add confirm for cancel?
+        });
+        _this.inEditOrCreateMode = false;
+        // return to pointer mode
+        _this.eventEmitter.publish('SET_STATE_MACHINE_POINTER.' +_this.windowId);
+
+      }));
+
+      this.eventsSubscriptions.push(_this.eventEmitter.subscribe('clearDraftPaths.'+_this.windowId,function(){
+        _this.clearDraftData();
+      }));
+
+      this.eventsSubscriptions.push(_this.eventEmitter.subscribe('onAnnotationCreated.'+_this.windowId,function(event,oaAnno){
+        //should remove the styles added for newly created annotation
+        for(var i=0;i<_this.draftPaths.length;i++){
+          if(_this.draftPaths[i].data && _this.draftPaths[i].data.newlyCreated){
+            _this.draftPaths[i].strokeWidth /= _this.draftPaths[i].data.newlyCreatedStrokeFactor;
+            _this.draftPaths[i].data.currentStrokeValue /= _this.draftPaths[i].data.newlyCreatedStrokeFactor;
+            delete _this.draftPaths[i].data.newlyCreated;
+            delete _this.draftPaths[i].data.newlyCreatedStrokeFactor;
+          }
+        }
+
+        var svg = _this.getSVGString(_this.draftPaths);
+        oaAnno.on = {
+          "@type": "oa:SpecificResource",
+          "full": _this.state.getWindowObjectById(_this.windowId).canvasID,
+          "selector": {
+            "@type": "oa:SvgSelector",
+            "value": svg
+          },
+          "within": {
+            "@id": _this.state.getWindowObjectById(_this.windowId).loadedManifest,
+              "@type": "sc:Manifest"
+          }
+        };
+        //save to endpoint
+        _this.eventEmitter.publish('annotationCreated.' + _this.windowId, [oaAnno]);
+
+        // return to pointer mode
+        _this.inEditOrCreateMode = false;
+        _this.eventEmitter.publish('SET_STATE_MACHINE_POINTER.' + _this.windowId);
+
+        //reenable viewer tooltips
+        _this.eventEmitter.publish('enableTooltips.' + _this.windowId);
+
+        _this.clearDraftData();
+        _this.annoTooltip = null;
+        _this.annoEditorVisible = false;
+      }));
+
+      this.eventsSubscriptions.push(_this.eventEmitter.subscribe('onAnnotationCreatedCanceled.'+_this.windowId,function(event,cancelCallback,immediate){
+        var cancel = function(){
+          _this.inEditOrCreateMode = false;
+          _this.eventEmitter.publish('SET_STATE_MACHINE_POINTER.' + _this.windowId);
+
+          _this.clearDraftData();
+          _this.annoTooltip = null;
+          _this.annoEditorVisible = false;
+        };
+        if (!immediate) {
+          new $.DialogBuilder(_this.slotWindowElement).dialog({
+            message: i18n.t('cancelAnnotation'),
+            closeButton: false,
+            buttons: {
+              'no': {
+                label: i18n.t('no'),
+                className: 'btn-default',
+                callback: function() {
+                  return;
+                }
+              },
+              'yes': {
+                label: i18n.t('yes'),
+                className: 'btn-primary',
+                callback: function() {
+                  cancel();
+                  if (cancelCallback) {
+                    cancelCallback();
+                  }
+                }
+              }
+            }
+          });
+        } else {
+          cancel();
+        }
+      }));
+
+      this.eventsSubscriptions.push(_this.eventEmitter.subscribe('onAnnotationDeleted.' + _this.windowId, function(event, id, callback) {
+        _this.inEditOrCreateMode = false;
+        _this.eventEmitter.publish('annotationDeleted.' + _this.windowId, [id]);
+        _this.eventEmitter.publish('SET_STATE_MACHINE_POINTER.' + _this.windowId);
+        if (callback) {
+          callback();
+        }
+      }));
+
+      this.eventsSubscriptions.push(this.eventEmitter.subscribe('SET_OVERLAY_TOOLTIP.' + this.windowId, function(event, options) {
         _this.annoTooltip = options.tooltip;
         _this.annoEditorVisible = options.visible;
         _this.draftPaths = options.paths;
-      });
+      }));
 
-      this.eventEmitter.subscribe('CANCEL_ACTIVE_ANNOTATIONS.' + this.windowId, function(event) {
+      this.eventsSubscriptions.push(this.eventEmitter.subscribe('CANCEL_ACTIVE_ANNOTATIONS.' + this.windowId, function(event) {
         //for now, don't worry about getting user confirmation, just cancel everything
         _this.clearDraftData();
         _this.annoTooltip = null;
         _this.annoEditorVisible = false;
-      });
+      }));
     },
 
     deleteShape:function(shape){
@@ -248,13 +427,59 @@
       shape.remove();
     },
 
+    getMousePositionInImage: function(mousePosition) {
+      if (mousePosition.x < 0) {
+        mousePosition.x = 0;
+      }
+      if (mousePosition.x > this.viewer.tileSources.width) {
+        mousePosition.x = this.viewer.tileSources.width;
+      }
+      if (mousePosition.y < 0) {
+        mousePosition.y = 0;
+      }
+      if (mousePosition.y > this.viewer.tileSources.height) {
+        mousePosition.y = this.viewer.tileSources.height;
+      }
+      return mousePosition;
+    },
+
+    adjustDeltaForShape: function(lastPoint, currentPoint, delta, bounds) {
+      //first check along x axis
+      if (lastPoint.x < currentPoint.x) {
+        //moving to the right, delta should be based on the right most edge
+        if (bounds.x + bounds.width > this.viewer.tileSources.width) {
+          delta.x = this.viewer.tileSources.width - (bounds.x + bounds.width);
+        }
+      } else {
+        //moving to the left, prevent it from going past the left edge.  if it does, use the shapes x value as the delta
+        if (bounds.x < 0) {
+          delta.x = Math.abs(bounds.x);
+        }
+      }
+
+      //check along y axis
+      if (lastPoint.y < currentPoint.y) {
+        // moving to the bottom
+        if (bounds.y + bounds.height > this.viewer.tileSources.height) {
+          delta.y = this.viewer.tileSources.height - (bounds.y + bounds.height);
+        }
+      } else {
+        //moving to the top
+        if (bounds.y < 0) {
+          delta.y = Math.abs(bounds.y);
+        }
+      }
+
+      return delta;
+    },
+
     onMouseUp: function(event) {
       if (!this.overlay.disabled) {
         event.stopPropagation();
-        jQuery(this.overlay.viewer.canvas).css('cursor','default');
+        //jQuery(this.overlay.viewer.canvas).css('cursor','default');
         // if (this.overlay.mode === 'deform' || this.overlay.mode === 'edit') {
         //   this.overlay.segment = null;
-        //   this.overlay.path = null;
+        //   this.overlay.()) = null;
         // }
         // if (this.overlay.mode != 'create') {
         //   this.overlay.mode = '';
@@ -270,6 +495,17 @@
       if (!this.overlay.disabled) {
         event.stopPropagation();
         if (this.overlay.currentTool) {
+          if (this.overlay.currentTool.name === 'Freehand' && this.overlay.mode === 'create') {
+            //freehand create needs to use mouse position because bounds are not accurate until shape is finished
+            event.point = this.overlay.getMousePositionInImage(event.point);
+            event.delta = event.point - event.lastPoint;
+          } else {
+            if(this.overlay.path){
+              var bounds = this.overlay.path.bounds;
+              // we already have a shape, and we are moving it, need to account for that, rather than mouse position
+              event.delta = this.overlay.adjustDeltaForShape(event.lastPoint, event.point, event.delta, bounds);
+            }
+          }
           //we may not currently have a tool if the user is in edit mode and didn't click on an editable shape
           this.overlay.currentTool.onMouseDrag(event, this.overlay);
         }
@@ -284,13 +520,14 @@
     },
 
     onMouseMove: function(event) {
-      this.overlay.cursorLocation = event.point;
       if (!this.overlay.disabled) {
-        // We are in drawing mode
+        //We are in drawing mode
         if (this.overlay.paperScope.project.hitTest(event.point, this.overlay.hitOptions)) {
-          //document.body.style.cursor = 'pointer';
+          this.overlay.eventEmitter.publish('POINTER_CURSOR.' + this.overlay.windowId);
+        } else if (this.overlay.currentTool && !this.overlay.path) {
+          this.overlay.eventEmitter.publish('CROSSHAIR_CURSOR.' + this.overlay.windowId);
         } else {
-          jQuery(this.overlay.viewer.canvas).css('cursor','default');
+          this.overlay.eventEmitter.publish('DEFAULT_CURSOR.' + this.overlay.windowId);
         }
         event.stopPropagation();
         if (this.overlay.currentTool) {
@@ -320,17 +557,9 @@
         this.overlay.latestMouseDownTime = time;
         var hitResult = this.overlay.paperScope.project.hitTest(event.point, this.overlay.hitOptions);
 
-        // no need for this check we have already disabled the current shape editing when not in edit mode
-        // by using the editable check, although having such info is okey to keep inside the code
-        //if (this.overlay.inEditMode) {
-          //if in edit mode, clear the current tool and mode in case the user clicked on an "empty" space // not okey what if i want to draw another shape
-          //if the user (re)clicked on an editable shape, the currentTool gets set below
-          //if the user has clicked on "empty" space, return and don't do anything more
-        //}
-
-        if(this.overlay.mode !== 'create'){
+        if (this.overlay.mode !== 'create' && this.overlay.mode !=='') {
           this.overlay.mode = '';
-          this.currentTool = null;
+          this.overlay.currentTool = null;
         }
 
         if (hitResult && this.overlay.mode !== 'create') {
@@ -369,22 +598,9 @@
         }
 
         if (this.overlay.currentTool) {
+          this.overlay.eventEmitter.publish('HUD_REMOVE_CLASS.'+this.overlay.windowId, ['.hud-dropdown', 'hud-disabled']);
+          event.point = this.overlay.getMousePositionInImage(event.point);
           this.overlay.currentTool.onMouseDown(event, this.overlay);
-          // should check if this is used anywhere and remove it if not used
-          // if (this.overlay.mode === 'translate' || this.overlay.mode === 'deform' || this.overlay.mode === 'edit') {
-          //   if (this.overlay.path && this.overlay.path.data.annotation) {
-          //     var inArray = false;
-          //     for (var i = 0; i < this.overlay.editedPaths.length; i++) {
-          //       if (this.overlay.editedPaths[i].name === this.overlay.path.name) {
-          //         inArray = true;
-          //         break;
-          //       }
-          //     }
-          //     if (!inArray) {
-          //       this.overlay.editedPaths.push(this.overlay.path);
-          //     }
-          //   }
-          // }
         }
       }
       this.overlay.hover();
@@ -420,6 +636,13 @@
       }
     },
 
+    rotate: function (event) {
+      if (this.paperScope && this.paperScope.view) {
+        this.paperScope.view._matrix.rotate(event.degrees-this.lastAngle, this.paperScope.view.center);
+        this.lastAngle = event.degrees;
+      }
+    },
+
     resize: function() {
       var viewportBounds = this.viewer.viewport.getBounds(true);
       /* in viewport coordinates */
@@ -435,8 +658,8 @@
         this.paperScope.view.viewSize = new this.paperScope.Size(this.canvas.width, this.canvas.height);
         this.paperScope.view.zoom = this.viewer.viewport.viewportToImageZoom(this.viewer.viewport.getZoom(true));
         this.paperScope.view.center = new this.paperScope.Size(
-          this.viewer.viewport.contentSize.x * viewportBounds.x + this.paperScope.view.bounds.width / 2,
-          this.viewer.viewport.contentSize.x * viewportBounds.y + this.paperScope.view.bounds.height / 2);
+          this.viewer.world.getItemAt(0).source.dimensions.x * viewportBounds.x + this.paperScope.view.bounds.width / 2,
+          this.viewer.world.getItemAt(0).source.dimensions.x * viewportBounds.y + this.paperScope.view.bounds.height / 2);
         this.paperScope.view.update(true);
         var allItems = this.paperScope.project.getItems({
           name: /_/
@@ -574,10 +797,9 @@
     createRectangle: function(shape, annotation) {
       var paperItems = [];
       var rect = new $.Rectangle();
-      var newShape = this.viewer.viewport.viewportToImageRectangle(shape);
       var initialPoint = {
-        'x': newShape.x,
-        'y': newShape.y
+        'x': shape.x,
+        'y': shape.y
       };
       var currentMode = this.mode;
       var currentPath = this.path;
@@ -591,8 +813,8 @@
       this.path = rect.createShape(initialPoint, this);
       var eventData = {
         'delta': {
-          'x': newShape.width,
-          'y': newShape.height
+          'x': shape.width,
+          'y': shape.height
         }
       };
       rect.onMouseDrag(eventData, this);
@@ -681,27 +903,31 @@
       this.canvas.style.display = 'block';
     },
 
+    checkToRemoveFocus: function() {
+      this.currentTool = '';
+      //if we are switching between editing and drawing, remove an old path
+      if (this.inEditOrCreateMode && this.path) {
+        this.removeFocus();
+      }
+    },
+
     disable: function() {
       this.disabled = true;
-      this.inEditMode = false;
+      this.inEditOrCreateMode = false;
       this.eventEmitter.publish('enableTooltips.' + this.windowId);
       this.deselectAll();
     },
 
     enableEdit: function() {
       this.disabled = false;
-      this.inEditMode = true;
+      this.inEditOrCreateMode = true;
       this.eventEmitter.publish('disableTooltips.' + this.windowId);
     },
 
     enable: function() {
-      var setDefaultTool = this.disabled;
       this.disabled = false;
-      this.inEditMode = false;
+      //this.inEditOrCreateMode = false;
       this.eventEmitter.publish('disableTooltips.' + this.windowId);
-      // if (setDefaultTool) {
-      //   this.eventEmitter.publish('toggleDefaultDrawingTool.' + this.windowId);
-      // }
     },
 
     refresh: function() {
@@ -757,12 +983,14 @@
       if (!shape) {
         return;
       }
+      this.inEditOrCreateMode = true;
       if (this.hoveredPath) {
         this.updateSelection(false, this.hoveredPath);
       }
 
       // Set special style for newly created shapes
       var newlyCreatedStrokeFactor = this.drawingToolsSettings.newlyCreatedShapeStrokeWidthFactor || 5;
+      shape.data.newlyCreatedStrokeFactor = newlyCreatedStrokeFactor;
       shape.data.newlyCreated = true;
       shape.data.currentStrokeValue *= newlyCreatedStrokeFactor;
       shape.strokeWidth *= newlyCreatedStrokeFactor;
@@ -797,36 +1025,7 @@
             return _this.draftPaths.length;
           },
           onAnnotationCreated: function(oaAnno) {
-            //should remove the styles added for newly created annotation
-            for(var i=0;i<_this.draftPaths.length;i++){
-              if(_this.draftPaths[i].data && _this.draftPaths[i].data.newlyCreated){
-                _this.draftPaths[i].strokeWidth /= newlyCreatedStrokeFactor;
-                _this.draftPaths[i].data.currentStrokeValue /=newlyCreatedStrokeFactor;
-                delete _this.draftPaths[i].data.newlyCreated;
-              }
-            }
-
-            var svg = _this.getSVGString(_this.draftPaths);
-            oaAnno.on = {
-              "@type": "oa:SpecificResource",
-              "full": _this.state.getWindowObjectById(_this.windowId).canvasID,
-              "selector": {
-                "@type": "oa:SvgSelector",
-                "value": svg
-              }
-            };
-            //save to endpoint
-            _this.eventEmitter.publish('annotationCreated.' + _this.windowId, [oaAnno, shape]);
-          },
-          onCancel: function() {
-            _this.clearDraftData();
-            _this.annoTooltip = null;
-            _this.annoEditorVisible = false;
-          },
-          onCompleted: function() {
-            _this.clearDraftData();
-            _this.annoTooltip = null;
-            _this.annoEditorVisible = false;
+            _this.eventEmitter.publish('onAnnotationCreated.'+_this.windowId,[oaAnno]);
           }
         });
         _this.annoEditorVisible = true;
@@ -862,26 +1061,20 @@
     // Should unsubscribe from all events
     // Should have no references in order to be garbage collected
     destroy:function(){
-      this.eventEmitter.unsubscribe('deleteShape.' + this.windowId);
-      this.eventEmitter.unsubscribe('toggleDrawingTool.' + this.windowId);
-      this.eventEmitter.unsubscribe('toggleBorderType.' + this.windowId);
-      this.eventEmitter.unsubscribe('toggleDefaultDrawingTool.' + this.windowId);
-      this.eventEmitter.unsubscribe('changeBorderColor.' + this.windowId);
-      this.eventEmitter.unsubscribe('changeFillColor.' + this.windowId);
-      this.eventEmitter.unsubscribe('changeBorderColor.' + this.windowId);
-      this.eventEmitter.unsubscribe('SET_OVERLAY_TOOLTIP.' + this.windowId);
-      this.eventEmitter.unsubscribe('CANCEL_ACTIVE_ANNOTATIONS.' + this.windowId);
-      this.eventEmitter.unsubscribe('modeChange.' + this.windowId);
-      this.eventEmitter.unsubscribe('CANCEL_ACTIVE_ANNOTATIONS.' + this.windowId);
+      var _this = this;
 
-      this.viewer.removeAllHandlers('animation');
-      this.viewer.removeAllHandlers('open');
-      this.viewer.removeAllHandlers('animation-finish');
-      this.viewer.removeAllHandlers('update-viewport');
-      this.viewer.removeAllHandlers('resize');
-      this.viewer.removeAllHandlers('rotate');
-      this.viewer.removeAllHandlers('constrain');
-      this.viewer.removeAllHandlers('close');
+      this.eventsSubscriptions.forEach(function(event){
+        _this.eventEmitter.unsubscribe(event.name,event.handler);
+      });
+
+      this.viewer.removeHandler('animation',this._thisResize);
+      this.viewer.removeHandler('open',this._thisResize);
+      this.viewer.removeHandler('animation-finish',this._thisResize);
+      this.viewer.removeHandler('update-viewport',this._thisResize);
+      this.viewer.removeHandler('resize',this._thisResize);
+      this.viewer.removeHandler('rotate',this._thisResize);
+      this.viewer.removeHandler('constrain',this._thisResize);
+      this.viewer.removeHandler('close',this._thisDestroy);
     }
   };
 }(Mirador));

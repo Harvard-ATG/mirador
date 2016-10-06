@@ -9,8 +9,9 @@
       eventEmitter: null
     }, options);
 
+    this.eventsSubscriptions = [];
+
     this.init();
-    this.listenForActions();
   };
 
   $.OsdRegionDrawTool.prototype = {
@@ -19,26 +20,50 @@
       this.svgOverlay = this.osdViewer.svgOverlay(this.osdViewer.id, this.windowId, this.state, this.eventEmitter);
       this.svgOverlay.show();
       this.svgOverlay.disable();
+
+      this.listenForActions();
     },
 
-    enterCreateMode: function() {
-      this.osdViewer.setMouseNavEnabled(false);
-      this.svgOverlay.show();
-      this.svgOverlay.enable();
-    },
-
-    enterCreateShapeMode: function() {
-      if(!this.svgOverlay.inEditMode){
-        this.osdViewer.setMouseNavEnabled(false);
-        this.svgOverlay.show();
-        this.svgOverlay.enable();
+    enterDisplayAnnotations: function() {
+      // if a user selected the pointer mode but is still actively
+      // working on an annotation, don't re-render
+      if (!this.svgOverlay.inEditOrCreateMode) {
+        this.exitEditMode(true);
+        this.render();
       }
     },
 
-    enterEditMode: function() {
+    enterCreateAnnotation: function() {
+      // if a user selected went from pointer to a shape but is still actively
+      // working on an annotation, don't re-render
+      if (!this.svgOverlay.inEditOrCreateMode) {
+        this.osdViewer.setMouseNavEnabled(false);
+        this.svgOverlay.show();
+        this.svgOverlay.enable();
+        this.render();
+      } else {
+        this.svgOverlay.checkToRemoveFocus();
+      }
+    },
+
+    enterCreateShape: function() {
+      if (!this.svgOverlay.inEditOrCreateMode) {
+        this.osdViewer.setMouseNavEnabled(false);
+        this.svgOverlay.show();
+        this.svgOverlay.enable();
+      } else {
+        this.svgOverlay.checkToRemoveFocus();
+      }
+    },
+
+    enterEditAnnotation: function() {
       this.osdViewer.setMouseNavEnabled(false);
       this.svgOverlay.show();
       this.svgOverlay.enableEdit();
+    },
+
+    enterDefault: function() {
+      this.exitEditMode(false);
     },
 
     exitEditMode: function(showAnnotations) {
@@ -58,22 +83,20 @@
       var _this = this;
       _this.annotationsToShapesMap = {};
       var deferreds = jQuery.map(this.list, function(annotation) {
-        var deferred = jQuery.Deferred();
-        if(annotation.on && !annotation.on.selector){
-          // temporary until view for full list of annotations for current canvas is contributed
-          return deferred;
-        } else if (typeof annotation.on === 'object') {
-          if (annotation.on.selector.value.indexOf('<svg') !== -1) {
+        var deferred = jQuery.Deferred(),
+        shapeArray;
+        if (annotation.on && typeof annotation.on === 'object') {
+          if (!annotation.on.selector) {
+            return deferred;
+          } else if (annotation.on.selector.value.indexOf('<svg') !== -1) {
             shapeArray = _this.svgOverlay.parseSVG(annotation.on.selector.value, annotation);
           } else {
-            var shape = annotation.on.selector.value.split('=')[1].split(',');
-            shape = _this.svgOverlay.viewer.viewport.imageToViewportRectangle(shape[0], shape[1], shape[2], shape[3]);
-            shapeArray = _this.svgOverlay.createRectangle(shape, annotation);
+            shapeArray = _this.parseRectangle(annotation.on.selector.value, annotation);
           }
+        } else if (annotation.on && typeof annotation.on === 'string') {
+          shapeArray = _this.parseRectangle(annotation.on, annotation);
         } else {
-          var shapeObj = annotation.on.split('#')[1].split('=')[1].split(',');
-          shapeObj = _this.svgOverlay.viewer.viewport.imageToViewportRectangle(shapeObj[0], shapeObj[1], shapeObj[2], shapeObj[3]);
-          shapeArray = _this.svgOverlay.createRectangle(shapeObj, annotation);
+          return deferred;
         }
         _this.svgOverlay.restoreLastView(shapeArray);
         _this.annotationsToShapesMap[annotation['@id']] = shapeArray;
@@ -93,64 +116,21 @@
       this.annoTooltip.initializeViewerUpgradableToEditor({
         container: windowElement,
         viewport: windowElement,
-        getAnnoFromRegion: _this.getAnnoFromRegion.bind(this),
-        onAnnotationSaved: function (oaAnno) {
-          var onAnnotationSaved = jQuery.Deferred();
-
-          if (!_this.svgOverlay.draftPaths.length) {
-            new $.DialogBuilder(windowElement).dialog({
-              message: i18n.t('editModalSaveAnnotationWithNoShapesMsg'),
-              buttons: {
-                success: {
-                  label: i18n.t('editModalBtnSaveWithoutShapes'),
-                  className: 'btn-success',
-                  callback: function () {
-                    oaAnno.on = {
-                      "@type": "oa:SpecificResource",
-                      "full": _this.state.getWindowObjectById(_this.windowId).canvasID
-                    };
-                    //save to endpoint
-                    _this.eventEmitter.publish('annotationUpdated.' + _this.windowId, [oaAnno]);
-                    onAnnotationSaved.resolve();
-                  }
-                },
-                danger: {
-                  label: i18n.t('editModalBtnDeleteAnnotation'),
-                  className: 'btn-danger',
-                  callback: function () {
-                    _this.eventEmitter.publish('annotationDeleted.' + _this.windowId, [oaAnno['@id']]);
-                    onAnnotationSaved.resolve();
-                  }
-                },
-                main: {
-                  label: i18n.t('cancel'),
-                  className: 'btn-default',
-                  callback: function () {
-                    onAnnotationSaved.reject();
-                  }
-                }
-              }
-
-            });
-
-          } else {
-            var svg = _this.svgOverlay.getSVGString(_this.svgOverlay.draftPaths);
-            oaAnno.on = {
-              "@type": "oa:SpecificResource",
-              "full": _this.state.getWindowObjectById(_this.windowId).canvasID,
-              "selector": {
-                "@type": "oa:SvgSelector",
-                "value": svg
-              }
-            };
-            //save to endpoint
-            _this.eventEmitter.publish('annotationUpdated.' + _this.windowId, [oaAnno]);
-            onAnnotationSaved.resolve();
-          }
-          return onAnnotationSaved.promise();
-        }
+        getAnnoFromRegion: _this.getAnnoFromRegion.bind(this)
       });
       this.svgOverlay.paperScope.view.draw();
+    },
+
+    parseRectangle: function(rectString, annotation) {
+      var shapeArray = rectString.split('=')[1].split(','),
+      shape = {
+        'x': parseInt(shapeArray[0]),
+        'y': parseInt(shapeArray[1]),
+        'width': parseInt(shapeArray[2]),
+        'height': parseInt(shapeArray[3])
+      };
+
+      return this.svgOverlay.createRectangle(shape, annotation);
     },
 
     showTooltipsFromMousePosition: function(event, location, absoluteLocation) {
@@ -184,10 +164,10 @@
         }
       }
       this.svgOverlay.paperScope.view.draw();
-      if (_this.svgOverlay.availableExternalCommentsPanel) {
-        _this.eventEmitter.publish('annotationMousePosition.' + _this.windowId, [annotations]);
-        return;
-      }
+      //if (_this.svgOverlay.availableExternalCommentsPanel) {
+     //   _this.eventEmitter.publish('annotationMousePosition.' + _this.windowId, [annotations]);
+      //  return;
+      //}
       _this.annoTooltip.showViewer({
         annotations: annotations,
         triggerEvent: event,
@@ -215,37 +195,40 @@
     listenForActions: function() {
       var _this = this;
 
-      _this.eventEmitter.subscribe('refreshOverlay.' + _this.windowId, function(event) {
-        _this.svgOverlay.restoreEditedShapes();
-        _this.svgOverlay.deselectAll();
-        _this.svgOverlay.mode = '';
-        _this.render();
-      });
+      this._thisDestroy = function(){
+        _this.destroy();
+      };
 
-      _this.eventEmitter.subscribe('updateTooltips.' + _this.windowId, function(event, location, absoluteLocation) {
+      _this.osdViewer.addHandler('close', this._thisDestroy);
+
+      this.eventsSubscriptions.push(this.eventEmitter.subscribe('DESTROY_EVENTS.'+this.windowId, function(event) {
+        _this.destroy();
+      }));
+
+      this.eventsSubscriptions.push(_this.eventEmitter.subscribe('updateTooltips.' + _this.windowId, function(event, location, absoluteLocation) {
         if (_this.annoTooltip && !_this.annoTooltip.inEditOrCreateMode) {
           _this.showTooltipsFromMousePosition(event, location, absoluteLocation);
         }
-      });
+      }));
 
-      _this.eventEmitter.subscribe('removeTooltips.' + _this.windowId, function() {
+      this.eventsSubscriptions.push(_this.eventEmitter.subscribe('removeTooltips.' + _this.windowId, function() {
         jQuery(_this.osdViewer.element).qtip('destroy', true);
-      });
+      }));
 
-      _this.eventEmitter.subscribe('disableTooltips.' + _this.windowId, function() {
+      this.eventsSubscriptions.push(_this.eventEmitter.subscribe('disableTooltips.' + _this.windowId, function() {
         if (_this.annoTooltip) {
           _this.annoTooltip.inEditOrCreateMode = true;
         }
-      });
+      }));
 
-      _this.eventEmitter.subscribe('enableTooltips.' + _this.windowId, function() {
+      this.eventsSubscriptions.push(_this.eventEmitter.subscribe('enableTooltips.' + _this.windowId, function() {
         if (_this.annoTooltip) {
           _this.annoTooltip.inEditOrCreateMode = false;
         }
         _this.svgOverlay.restoreDraftShapes();
-      });
+      }));
 
-      _this.eventEmitter.subscribe('SET_ANNOTATION_EDITING.' + _this.windowId, function(event, options) {
+      this.eventsSubscriptions.push(_this.eventEmitter.subscribe('SET_ANNOTATION_EDITING.' + _this.windowId, function(event, options) {
         jQuery.each(_this.annotationsToShapesMap, function(key, paths) {
           // if we have a matching annotationId, pass the boolean value on for each path, otherwise, always pass false
           if (key === options.annotationId) {
@@ -275,13 +258,22 @@
           }
         });
         _this.svgOverlay.paperScope.view.draw();
-      });
+      }));
     },
 
     getAnnoFromRegion: function(regionId) {
       return this.list.filter(function(annotation) {
         return annotation['@id'] === regionId;
       });
+    },
+
+    destroy: function () {
+      var _this = this;
+      this.eventsSubscriptions.forEach(function(event){
+        _this.eventEmitter.unsubscribe(event.name,event.handler);
+      });
+      this.osdViewer.removeHandler('close', this._thisDestroy);
     }
+
   };
 }(Mirador));

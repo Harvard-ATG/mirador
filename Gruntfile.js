@@ -32,7 +32,7 @@ module.exports = function(grunt) {
     'js/lib/state-machine.min.js',
     'js/lib/tinymce.min.js',
     'js/lib/handlebars.js',
-    'js/lib/openseadragon.min.js',
+    'js/lib/openseadragon.js',
     'js/lib/d3.v3.min.js',
     'js/lib/pubsub.min.js',
     'js/lib/URI.min.js',
@@ -40,7 +40,8 @@ module.exports = function(grunt) {
     'js/lib/isfahan.js',
     'js/lib/paper-full.min.js',
     'js/lib/spectrum.js',
-    'js/lib/i18next.min.js'
+    'js/lib/i18next.min.js',
+    'js/lib/modernizr.custom.js'
   ],
 
   // libraries/plugins for running tests

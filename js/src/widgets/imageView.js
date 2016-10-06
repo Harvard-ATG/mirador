@@ -68,6 +68,7 @@
       // throughout any updates to the osd canvas.
       this.hud = new $.Hud({
         appendTo: this.element,
+        qtipElement: this.qtipElement,
         bottomPanelAvailable: this.bottomPanelAvailable,
         windowId: this.windowId,
         canvasControls: this.canvasControls,
@@ -148,8 +149,14 @@
         _this.element.find(elementSelector).fadeOut(duration, complete);
       });
 
-      _this.eventEmitter.subscribe('SET_STATE_MACHINE_POINTER.' + _this.windowId, function(event) {
-        _this.hud.annoState.choosePointer();
+      _this.eventEmitter.subscribe('DEFAULT_CURSOR.' + _this.windowId, function(event) {
+        jQuery(_this.osd.canvas).css("cursor", "default");
+      });
+      _this.eventEmitter.subscribe('CROSSHAIR_CURSOR.' + _this.windowId, function(event) {
+        jQuery(_this.osd.canvas).css("cursor", "crosshair");
+      });
+      _this.eventEmitter.subscribe('POINTER_CURSOR.' + _this.windowId, function(event) {
+        jQuery(_this.osd.canvas).css("cursor", "pointer");
       });
       //Related to Annotations HUD
     },
@@ -171,10 +178,12 @@
         }
         if (_this.hud.annoState.current === 'off') {
           _this.hud.annoState.displayOn(this);
+          _this.annotationState = 'on';
         } else {
           //make sure to force the controls back to auto fade
           _this.forceShowControls = false;
           _this.hud.annoState.displayOff(this);
+          _this.annotationState = 'off';
         }
       });
 
@@ -262,7 +271,7 @@
       this.element.find('.mirador-osd-refresh-mode').on('click', function() {
         //update annotation list from endpoint
         _this.eventEmitter.publish('updateAnnotationList.'+_this.windowId);
-        _this.eventEmitter.publish('refreshOverlay.'+_this.windowId, '');
+       // _this.eventEmitter.publish('refreshOverlay.'+_this.windowId, '');
       });
       //Annotation specific controls
 
@@ -275,10 +284,11 @@
         "grayscale" : "grayscale(0%)",
         "invert" : "invert(0%)"
       };
+      // console.log(modernizr);
 
       function setFilterCSS() {
         var filterCSS = jQuery.map(filterValues, function(value, key) { return value; }).join(" "),
-        osdCanvas = jQuery(_this.osd.canvas);
+        osdCanvas = jQuery(_this.osd.drawer.canvas);
         osdCanvas.css({
           'filter'         : filterCSS,
           '-webkit-filter' : filterCSS,
@@ -579,13 +589,13 @@
             var rect = new OpenSeadragon.Rect(_this.osdOptions.osdBounds.x, _this.osdOptions.osdBounds.y, _this.osdOptions.osdBounds.width, _this.osdOptions.osdBounds.height);
             _this.osd.viewport.fitBounds(rect, true);
           } else {
-            //else reset bounds for this image
+            // else reset bounds for this image
             _this.setBounds();
           }
 
           _this.addAnnotationsLayer(_this.elemAnno);
 
-          //get the state before resetting it so we can get back to that state
+          // get the state before resetting it so we can get back to that state
           var originalState = _this.hud.annoState.current;
           var selected = _this.element.find('.mirador-osd-edit-mode.selected');
           var shape = null;
@@ -594,24 +604,20 @@
           }
           if (originalState === 'none') {
             _this.hud.annoState.startup();
-          } else if (originalState === 'off') {
-            //original state if off, so don't need to do anything
+          } else if (originalState === 'off' || _this.annotationState === 'off') {
+            //original state is off, so don't need to do anything
           } else {
             _this.hud.annoState.displayOff();
           }
 
-          if (originalState === 'pointer') {
+          if (originalState === 'pointer' || _this.annotationState === 'on') {
             _this.hud.annoState.displayOn();
           } else if (originalState === 'shape') {
             _this.hud.annoState.displayOn();
             _this.hud.annoState.chooseShape(shape);
           } else {
-            //original state if off, so don't need to do anything
+            //original state is off, so don't need to do anything
           }
-
-          // A hack. Pop the osd overlays layer after the canvas so
-          // that annotations appear.
-          jQuery(_this.osd.canvas).children().first().remove().appendTo(_this.osd.canvas);
 
           _this.osd.addHandler('zoom', $.debounce(function() {
             _this.setBounds();
@@ -658,7 +664,6 @@
     next: function() {
       var _this = this;
       var next = this.currentImgIndex + 1;
-
       if (next < this.imagesList.length) {
         _this.eventEmitter.publish('SET_CURRENT_CANVAS_ID.' + this.windowId, this.imagesList[next]['@id']);
       }

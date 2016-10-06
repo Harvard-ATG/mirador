@@ -2,10 +2,11 @@ paper.install(window);
 
 describe('Overlay', function() {
 
-  function getEvent(delta, point, event) {
+  function getEvent(delta, point, lastPoint, event) {
     return {
       'delta': delta,
       'point': point,
+      'lastPoint': lastPoint,
       'event': event,
       'stopPropagation': jasmine.createSpy()
     };
@@ -66,7 +67,7 @@ describe('Overlay', function() {
       },
       'addHandler': function(eventName, functionBody) {
       },
-      'removeAllHandlers':function(eventName){
+      'removeHandler':function(eventName,functionBody){
       }
     };
     var drawingToolsSettings = {
@@ -120,20 +121,6 @@ describe('Overlay', function() {
 
     expect(this.overlay.currentTool).not.toBeNull();
     expect(this.overlay.currentTool.logoClass).toBe(this.pin.logoClass);
-  });
-
-  it('toggleDefaultDrawingTool', function() {
-    this.eventEmitter.publish('toggleDefaultDrawingTool.' + this.windowObjMock.windowId, []);
-
-    expect(this.overlay.currentTool).toBeNull();
-
-    this.overlay.disabled = false;
-    this.rectangle = new Mirador.Rectangle();
-    this.overlay.availableAnnotationDrawingTools = ['Rectangle', 'Pin'];
-    this.eventEmitter.publish('toggleDefaultDrawingTool.' + this.windowObjMock.windowId, []);
-
-    expect(this.overlay.currentTool).not.toBeNull();
-    expect(this.overlay.currentTool.logoClass).toBe(this.rectangle.logoClass);
   });
 
   it('changeBorderColor', function() {
@@ -274,9 +261,19 @@ describe('Overlay', function() {
       'x': 100,
       'y': 100
     }, {}, {
+      'x' : 99,
+      'y' : 99
+    }, {
       'clientX': 100,
       'clientX': 100
     });
+    this.overlay.path = {};
+    this.overlay.path.bounds = {
+      'x': 0,
+      'y': 0,
+      'width': 100,
+      height: 100
+    };
     this.overlay.overlay = this.overlay;
     this.overlay.disabled = true;
     this.overlay.onMouseDrag(event);
@@ -296,7 +293,7 @@ describe('Overlay', function() {
     var event = getEvent({
       'x': 100,
       'y': 100
-    }, {}, {
+    }, {}, {}, {
       'clientX': 100,
       'clientX': 100
     });
@@ -366,6 +363,10 @@ describe('Overlay', function() {
     this.rectangle = new Mirador.Rectangle(); // TODO should use stubbed tool
     spyOn(this.rectangle, 'onMouseDown');
     spyOn(this.rectangle, 'onDoubleClick');
+    this.overlay.viewer.tileSources = {
+      'width': 998,
+      'height': 998
+    }
     var event = getEvent({
       'x': 100,
       'y': 100
@@ -521,10 +522,10 @@ describe('Overlay', function() {
   });
 
   it('should unsubscibe from all events when destroying',function(){
-    this.overlay.destroy();
-    for(var key in this.overlay.eventEmitter.events){
-      expect(this.overlay.eventEmitter.events[key]).toBe(0);
-    }
+   this.overlay.destroy();
+   for(var key in this.overlay.eventEmitter.events){
+     expect(this.overlay.eventEmitter.events[key]).toBe(0);
+   }
   });
 
 
